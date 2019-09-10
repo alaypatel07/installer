@@ -226,7 +226,7 @@ func (a *Bootstrap) getTemplateData(installConfig *types.InstallConfig, releaseI
 		AdditionalTrustBundle: installConfig.AdditionalTrustBundle,
 		PullSecret:            installConfig.PullSecret,
 		ReleaseImage:          releaseImage,
-		EtcdCluster:           fmt.Sprintf("https://bootstrap.%s:2379", installConfig.ClusterDomain()),
+		EtcdCluster:           strings.Join(etcdEndpoints, ","),
 		Proxy:                 &proxy.Status,
 		Registries:            registries,
 		BootImage:             string(*rhcosImage),
