@@ -4,6 +4,9 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"github.com/openshift/installer/pkg/asset/installconfig"
+	"go.etcd.io/etcd/clientv3"
+	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -31,6 +34,7 @@ import (
 	"github.com/openshift/installer/pkg/asset"
 	assetstore "github.com/openshift/installer/pkg/asset/store"
 	targetassets "github.com/openshift/installer/pkg/asset/targets"
+	destroybootstrap "github.com/openshift/installer/pkg/destroy/bootstrap"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
 )
 
@@ -94,6 +98,11 @@ var (
 					logrus.Fatal(errors.Wrap(err, "loading kubeconfig"))
 				}
 
+				err = waitForEtcdCluster(ctx, installConfigTarget.assets[0], rootOpts.dir)
+				if err != nil {
+					logrus.Fatal(err)
+				}
+
 				err = waitForBootstrapComplete(ctx, config, rootOpts.dir)
 				if err != nil {
 					if err2 := runGatherBootstrapCmd(rootOpts.dir); err2 != nil {
@@ -119,6 +128,42 @@ var (
 
 	targets = []target{installConfigTarget, manifestsTarget, ignitionConfigsTarget, clusterTarget}
 )
+
+func waitForEtcdCluster(ctx context.Context, asset asset.WritableAsset, directory string) error {
+	installConfig := asset.(*installconfig.InstallConfig).Config
+	etcdEndpoints := make([]string, *installConfig.ControlPlane.Replicas)
+
+	for i := range etcdEndpoints {
+		etcdEndpoints[i] = fmt.Sprintf("https://etcd-%d.%s:2379", i, installConfig.ClusterDomain())
+	}
+	apiTimeout := 30 * time.Minute
+	logrus.Infof("Waiting up to %v for the Etcd Cluster to be healthy", apiTimeout)
+	apiContext, cancel := context.WithTimeout(ctx, apiTimeout)
+	defer cancel()
+
+	return wait.PollUntil(30*time.Second, func() (bool, error) {
+		return isEtcdHealthy(etcdEndpoints), nil
+	}, apiContext.Done())
+}
+
+func isEtcdHealthy(endpoints []string) bool {
+	for _, endpoint := range endpoints {
+		c, err := clientv3.NewFromURL(endpoint)
+		if err != nil {
+			logrus.Errorf("Error getting client %v\n", err)
+			return false
+		}
+		ctx, _ := context.WithDeadline(context.Background(), time.Now().Add(5*time.Second))
+		_, err = c.Get(ctx, "health")
+		if err != nil && err != rpctypes.ErrPermissionDenied {
+			logrus.Errorf("Error getting health %v\n", err)
+			return false
+		}
+		c.Close()
+	}
+
+	return true
+}
 
 func newCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
