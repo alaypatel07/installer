@@ -132,3 +132,7 @@ required = [
   branch = "master"
   name = "github.com/metal3-io/baremetal-operator"
   source = "https://github.com/openshift/baremetal-operator"
+
+[[constraint]]
+  name = "go.etcd.io/etcd"
+  version = "3.4.1"
