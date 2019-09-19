@@ -89,7 +89,7 @@ resource "aws_route53_record" "bootstrap_a_node" {
   type    = "A"
   ttl     = "60"
   zone_id = "${aws_route53_zone.int.zone_id}"
-  name    = "bootstrap.${var.cluster_domain}"
+  name    = "etcd-bootstrap.${var.cluster_domain}"
   records = ["${var.bootstrap_ip_address}"]
 }
 
