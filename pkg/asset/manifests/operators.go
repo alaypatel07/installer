@@ -4,7 +4,6 @@ package manifests
 import (
 	"bytes"
 	"encoding/base64"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -166,15 +165,9 @@ func (m *Manifests) generateBootKubeManifests(dependencies asset.Parents) []*ass
 		rootCA,
 	)
 
-	etcdEndpointHostnames := make([]string, *installConfig.Config.ControlPlane.Replicas+1)
-	for i := range etcdEndpointHostnames {
-		if i == 0 {
-			etcdEndpointHostnames[i] = "etcd-bootstrap"
-			etcdEndpointHostnames[i+1] = fmt.Sprintf("etcd-%d", i)
-			continue
-		}
-		etcdEndpointHostnames[i] = fmt.Sprintf("etcd-%d", i)
-	}
+	etcdEndpointHostnames := make([]string, 1)
+	// TODO: figure out how to undo this when cluster-etcd-operator is not enabled
+	etcdEndpointHostnames[0] = "etcd-bootstrap"
 
 	templateData := &bootkubeTemplateData{
 		CVOClusterID:               clusterID.UUID,
