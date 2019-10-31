@@ -170,10 +170,10 @@ func (m *Manifests) generateBootKubeManifests(dependencies asset.Parents) []*ass
 	for i := range etcdEndpointHostnames {
 		if i == 0 {
 			etcdEndpointHostnames[i] = "etcd-bootstrap"
-			etcdEndpointHostnames[i+1] = fmt.Sprintf("etcd-%d", i)
+			etcdEndpointHostnames[i+1] = fmt.Sprintf("etcd-%d", i-1)
 			continue
 		}
-		etcdEndpointHostnames[i] = fmt.Sprintf("etcd-%d", i)
+		etcdEndpointHostnames[i] = fmt.Sprintf("etcd-%d", i-1)
 	}
 
 	templateData := &bootkubeTemplateData{
