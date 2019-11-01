@@ -352,6 +352,29 @@ bootkube_podman_run \
 	"${CLUSTER_BOOTSTRAP_IMAGE}" \
 	start --tear-down-early=false --asset-dir=/assets --required-pods="openshift-kube-apiserver/kube-apiserver,openshift-kube-scheduler/openshift-kube-scheduler,openshift-kube-controller-manager/kube-controller-manager,openshift-cluster-version/cluster-version-operator"
 
+if [ ! -z "$CLUSTER_ETCD_OPERATOR_IMAGE" ]
+then
+    ETCD_ENDPOINTS={{.EtcdCluster}}
+    # Wait for the etcd cluster to come up.
+    until bootkube_podman_run \
+            --rm \
+            --name etcdctl \
+            --env ETCDCTL_API=3 \
+            --volume /opt/openshift/tls:/opt/openshift/tls:ro,z \
+            --entrypoint etcdctl \
+            "${MACHINE_CONFIG_ETCD_IMAGE}" \
+            --dial-timeout=10m \
+            --cacert=/opt/openshift/tls/etcd-ca-bundle.crt \
+            --cert=/opt/openshift/tls/etcd-client.crt \
+            --key=/opt/openshift/tls/etcd-client.key \
+            --endpoints="${ETCD_ENDPOINTS}" \
+            endpoint health --cluster=true
+    do
+        echo "etcdctl failed. Retrying in 5 seconds..."
+        sleep 5
+    done
+fi
+
 # Workaround for https://github.com/opencontainers/runc/pull/1807
 touch /opt/openshift/.bootkube.done
 echo "bootkube.service complete"
