@@ -164,6 +164,12 @@ then
 	touch config-bootstrap.done
 fi
 
+# TODO: host-etcd endpoint needs to be rendered by cluster-etcd-operator
+if [ -z "$CLUSTER_ETCD_OPERATOR_IMAGE" ]
+then
+    sed -i '/192.0.2.1/I,+1 d' /opt/openshift/manifests/etcd-host-service-endpoints.yaml
+fi
+
 if [ ! -f kube-apiserver-bootstrap.done ]
 then
 	echo "Rendering Kubernetes API server core manifests..."
