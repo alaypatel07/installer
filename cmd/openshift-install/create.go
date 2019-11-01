@@ -102,13 +102,13 @@ var (
 					logrus.Fatal("Bootstrap failed to complete: ", err)
 				}
 
-				logrus.Info("Destroying the bootstrap resources...")
-				err = destroybootstrap.Destroy(rootOpts.dir)
+				err = waitForInstallComplete(ctx, config, rootOpts.dir)
 				if err != nil {
 					logrus.Fatal(err)
 				}
 
-				err = waitForInstallComplete(ctx, config, rootOpts.dir)
+				logrus.Info("Destroying the bootstrap resources...")
+				err = destroybootstrap.Destroy(rootOpts.dir)
 				if err != nil {
 					logrus.Fatal(err)
 				}
