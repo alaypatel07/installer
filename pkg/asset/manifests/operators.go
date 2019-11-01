@@ -167,13 +167,10 @@ func (m *Manifests) generateBootKubeManifests(dependencies asset.Parents) []*ass
 	)
 
 	etcdEndpointHostnames := make([]string, *installConfig.Config.ControlPlane.Replicas+1)
-	etcdEndpointHostnames[0] = "etcd-bootstrap"
 	for i := range etcdEndpointHostnames {
-		if i == 0 {
-			continue
-		}
 		etcdEndpointHostnames[i] = fmt.Sprintf("etcd-%d", i-1)
 	}
+	etcdEndpointHostnames[0] = "etcd-bootstrap"
 
 	templateData := &bootkubeTemplateData{
 		CVOClusterID:               clusterID.UUID,
