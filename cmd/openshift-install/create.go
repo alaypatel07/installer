@@ -25,13 +25,16 @@ import (
 	clientwatch "k8s.io/client-go/tools/watch"
 
 	configv1 "github.com/openshift/api/config/v1"
+	operatorv1 "github.com/openshift/api/operator/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
+	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	routeclient "github.com/openshift/client-go/route/clientset/versioned"
 	"github.com/openshift/installer/pkg/asset"
 	assetstore "github.com/openshift/installer/pkg/asset/store"
 	targetassets "github.com/openshift/installer/pkg/asset/targets"
 	destroybootstrap "github.com/openshift/installer/pkg/destroy/bootstrap"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
+	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 type target struct {
@@ -105,17 +108,20 @@ var (
 					logrus.Fatal("Bootstrap failed to complete: ", err)
 				}
 
+				err = waitForEtcdBootstrap(ctx, config, rootOpts.dir)
+				if err != nil {
+					logrus.Fatal("Etcd bootstraping failed")
+				}
+				logrus.Info("Destroying the bootstrap resources...")
+				err = destroybootstrap.Destroy(rootOpts.dir)
+				if err != nil {
+					logrus.Fatal(err)
+				}
 				err = waitForInstallComplete(ctx, config, rootOpts.dir)
 				if err != nil {
 					if err2 := logClusterOperatorConditions(ctx, config); err2 != nil {
 						logrus.Error("Attempted to gather ClusterOperator status after installation failure: ", err2)
 					}
-					logrus.Fatal(err)
-				}
-
-				logrus.Info("Destroying the bootstrap resources...")
-				err = destroybootstrap.Destroy(rootOpts.dir)
-				if err != nil {
 					logrus.Fatal(err)
 				}
 			},
@@ -451,6 +457,46 @@ func logComplete(directory, consoleURL string) error {
 	logrus.Infof("Access the OpenShift web-console here: %s", consoleURL)
 	logrus.Infof("Login to the console with user: kubeadmin, password: %s", pw)
 	return nil
+}
+
+func waitForEtcdBootstrap(ctx context.Context, config *rest.Config, directory string) error {
+	operatorConfigClient, err := operatorversionedclient.NewForConfig(config)
+	if err != nil {
+		return err
+	}
+
+	_, err = clientwatch.UntilWithSync(
+		ctx,
+		cache.NewListWatchFromClient(operatorConfigClient.OperatorV1().RESTClient(), "etcds", "", fields.OneTermEqualSelector("metadata.name", "cluster")),
+		&operatorv1.Etcd{},
+		nil,
+		func(event watch.Event) (bool, error) {
+			switch event.Type {
+			case watch.Added, watch.Modified:
+				etcd, ok := event.Object.(*operatorv1.Etcd)
+				if !ok {
+					logrus.Warnf("Expected an Etcd object but got a %q object instead", event.Object.GetObjectKind().GroupVersionKind())
+					return false, nil
+				}
+				if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, operatorv1.OperatorStatusTypeAvailable) &&
+					operatorv1helpers.IsOperatorConditionFalse(etcd.Status.Conditions, operatorv1.OperatorStatusTypeProgressing) &&
+					operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, operatorv1.OperatorStatusTypeDegraded) {
+					logrus.Debugf("Still waiting for the cluster to initialize: %s")
+					return true, nil
+				}
+				logrus.Debugf("Still waiting for the cluster-etcd-operator to bootstrap")
+				return false, nil
+			}
+			logrus.Debug("Still waiting for the cluster-etcd-operator to bootstrap...")
+			return false, nil
+		},
+	)
+
+	if err == nil {
+		logrus.Debug("cluster-etcd-operator bootstrap etcd")
+		return nil
+	}
+	return err
 }
 
 func waitForInstallComplete(ctx context.Context, config *rest.Config, directory string) error {
