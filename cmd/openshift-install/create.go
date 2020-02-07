@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -25,16 +26,15 @@ import (
 	clientwatch "k8s.io/client-go/tools/watch"
 
 	configv1 "github.com/openshift/api/config/v1"
-	operatorv1 "github.com/openshift/api/operator/v1"
 	configclient "github.com/openshift/client-go/config/clientset/versioned"
-	operatorversionedclient "github.com/openshift/client-go/operator/clientset/versioned"
 	routeclient "github.com/openshift/client-go/route/clientset/versioned"
 	"github.com/openshift/installer/pkg/asset"
+	"github.com/openshift/installer/pkg/asset/installconfig"
 	assetstore "github.com/openshift/installer/pkg/asset/store"
 	targetassets "github.com/openshift/installer/pkg/asset/targets"
 	destroybootstrap "github.com/openshift/installer/pkg/destroy/bootstrap"
+	"github.com/openshift/installer/pkg/types/baremetal"
 	cov1helpers "github.com/openshift/library-go/pkg/config/clusteroperator/v1helpers"
-	operatorv1helpers "github.com/openshift/library-go/pkg/operator/v1helpers"
 )
 
 type target struct {
@@ -108,15 +108,15 @@ var (
 					logrus.Fatal("Bootstrap failed to complete: ", err)
 				}
 
-				err = waitForClusterEtcdOperator(ctx, config)
-				if err != nil {
-					logrus.Fatal(err)
-				}
-
-				logrus.Info("Destroying the bootstrap resources...")
-				err = destroybootstrap.Destroy(rootOpts.dir)
-				if err != nil {
-					logrus.Fatal(err)
+				if oi, ok := os.LookupEnv("OPENSHIFT_INSTALL_PRESERVE_BOOTSTRAP"); ok && oi != "" {
+					logrus.Warn("OPENSHIFT_INSTALL_PRESERVE_BOOTSTRAP is set, not destroying bootstrap resources. " +
+						"Warning: this should only be used for debugging purposes, and poses a risk to cluster stability.")
+				} else {
+					logrus.Info("Destroying the bootstrap resources...")
+					err = destroybootstrap.Destroy(rootOpts.dir)
+					if err != nil {
+						logrus.Fatal(err)
+					}
 				}
 
 				err = waitForInstallComplete(ctx, config, rootOpts.dir)
@@ -252,7 +252,7 @@ func waitForBootstrapComplete(ctx context.Context, config *rest.Config, director
 
 	discovery := client.Discovery()
 
-	apiTimeout := 30 * time.Minute
+	apiTimeout := 20 * time.Minute
 	logrus.Infof("Waiting up to %v for the Kubernetes API at %s...", apiTimeout, config.Host)
 	apiContext, cancel := context.WithTimeout(ctx, apiTimeout)
 	defer cancel()
@@ -293,7 +293,7 @@ func waitForBootstrapComplete(ctx context.Context, config *rest.Config, director
 // and waits for the bootstrap configmap to report that bootstrapping has
 // completed.
 func waitForBootstrapConfigMap(ctx context.Context, client *kubernetes.Clientset) error {
-	timeout := 30 * time.Minute
+	timeout := 40 * time.Minute
 	logrus.Infof("Waiting up to %v for bootstrapping to complete...", timeout)
 
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -328,86 +328,21 @@ func waitForBootstrapConfigMap(ctx context.Context, client *kubernetes.Clientset
 	return errors.Wrap(err, "failed to wait for bootstrapping to complete")
 }
 
-// waitForClusterEtcdOperator watches the resource kind, if it exists, and waits for
-// the all the masters to join the etcd cluster.
-func waitForClusterEtcdOperator(ctx context.Context, config *rest.Config) error {
-	operatorClient, err := operatorversionedclient.NewForConfig(config)
-	if err != nil {
-		logrus.Errorf("error getting operator client config: %#v", err)
-		return err
-	}
-
-	operatorGroups, err := operatorClient.Discovery().ServerResourcesForGroupVersion("operator.openshift.io/v1")
-	if err != nil {
-		// TODO: figure out if we need to a way to get around transient apiserver errors
-		logrus.Errorf("unable to get operatorGroups: %#v", err)
-		return err
-	}
-
-	for _, o := range operatorGroups.APIResources {
-		if o.Kind == "Etcd" {
-			// etcd resource found, cluster-etcd-operator enabled cluster, need to wait
-			apiTimeout := 30 * time.Minute
-			logrus.Infof("Waiting up to %v for the cluster to bootstrap", apiTimeout)
-			ceoContext, cancel := context.WithTimeout(ctx, apiTimeout)
-			defer cancel()
-
-			return waitForEtcdBootstrap(ceoContext, operatorClient.RESTClient())
-		}
-	}
-
-	// could not find the etcd resource
-	return nil
-}
-
-func waitForEtcdBootstrap(ctx context.Context, operatorRestClient rest.Interface) error {
-	_, err := clientwatch.UntilWithSync(
-		ctx,
-		cache.NewListWatchFromClient(operatorRestClient, "etcds", "", fields.OneTermEqualSelector("metadata.name", "cluster")),
-		&operatorv1.Etcd{},
-		nil,
-		func(event watch.Event) (bool, error) {
-			switch event.Type {
-			case watch.Added, watch.Modified:
-				etcd, ok := event.Object.(*operatorv1.Etcd)
-				if !ok {
-					logrus.Warningf("Expected an Etcd object but got a %q object instead", event.Object.GetObjectKind().GroupVersionKind())
-					return false, nil
-				}
-				return etcdDoneScaling(etcd)
-			}
-			logrus.Info("Still waiting for the cluster to bootstrap...")
-			return false, nil
-		},
-	)
-
-	if err != nil {
-		logrus.Errorf("error waiting for etcd CR: %#v", err)
-		return err
-	}
-
-	return nil
-}
-
-func etcdDoneScaling(etcd *operatorv1.Etcd) (bool, error) {
-	if etcd.Spec.ManagementState == operatorv1.Unmanaged {
-		logrus.Info("Cluster etcd operator is in Unmanaged mode")
-		return true, nil
-	}
-	if operatorv1helpers.IsOperatorConditionTrue(etcd.Status.Conditions, operatorv1.OperatorStatusTypeAvailable) &&
-		operatorv1helpers.IsOperatorConditionFalse(etcd.Status.Conditions, operatorv1.OperatorStatusTypeProgressing) &&
-		operatorv1helpers.IsOperatorConditionFalse(etcd.Status.Conditions, operatorv1.OperatorStatusTypeDegraded) {
-		logrus.Info("Cluster etcd operator bootstrapped successfully")
-		return true, nil
-	}
-	logrus.Info("Still waiting for the cluster to bootstrap...")
-	return false, nil
-}
-
 // waitForInitializedCluster watches the ClusterVersion waiting for confirmation
 // that the cluster has been initialized.
 func waitForInitializedCluster(ctx context.Context, config *rest.Config) error {
 	timeout := 30 * time.Minute
+
+	// Wait longer for baremetal, due to length of time it takes to boot
+	if assetStore, err := assetstore.NewStore(rootOpts.dir); err == nil {
+		installConfig := &installconfig.InstallConfig{}
+		if err := assetStore.Fetch(installConfig); err == nil {
+			if installConfig.Config.Platform.Name() == baremetal.Name {
+				timeout = 60 * time.Minute
+			}
+		}
+	}
+
 	logrus.Infof("Waiting up to %v for the cluster at %s to initialize...", timeout, config.Host)
 	cc, err := configclient.NewForConfig(config)
 	if err != nil {

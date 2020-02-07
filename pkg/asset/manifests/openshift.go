@@ -17,6 +17,8 @@ import (
 	"github.com/openshift/installer/pkg/asset/installconfig/ovirt"
 	"github.com/openshift/installer/pkg/asset/machines"
 	openstackmanifests "github.com/openshift/installer/pkg/asset/manifests/openstack"
+	"github.com/openshift/installer/pkg/asset/openshiftinstall"
+	"github.com/openshift/installer/pkg/asset/rhcos"
 
 	osmachine "github.com/openshift/installer/pkg/asset/machines/openstack"
 	"github.com/openshift/installer/pkg/asset/password"
@@ -24,6 +26,7 @@ import (
 	"github.com/openshift/installer/pkg/types"
 	awstypes "github.com/openshift/installer/pkg/types/aws"
 	azuretypes "github.com/openshift/installer/pkg/types/azure"
+	baremetaltypes "github.com/openshift/installer/pkg/types/baremetal"
 	gcptypes "github.com/openshift/installer/pkg/types/gcp"
 	openstacktypes "github.com/openshift/installer/pkg/types/openstack"
 	ovirttypes "github.com/openshift/installer/pkg/types/ovirt"
@@ -55,11 +58,14 @@ func (o *Openshift) Dependencies() []asset.Asset {
 		&installconfig.InstallConfig{},
 		&installconfig.ClusterID{},
 		&password.KubeadminPassword{},
+		&openshiftinstall.Config{},
 
 		&openshift.CloudCredsSecret{},
 		&openshift.KubeadminPasswordSecret{},
 		&openshift.RoleCloudCredsSecretReader{},
 		&openshift.PrivateClusterOutbound{},
+		&openshift.BaremetalConfig{},
+		new(rhcos.Image),
 	}
 }
 
@@ -68,7 +74,8 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 	installConfig := &installconfig.InstallConfig{}
 	clusterID := &installconfig.ClusterID{}
 	kubeadminPassword := &password.KubeadminPassword{}
-	dependencies.Get(installConfig, kubeadminPassword, clusterID)
+	openshiftInstall := &openshiftinstall.Config{}
+	dependencies.Get(installConfig, kubeadminPassword, clusterID, openshiftInstall)
 	var cloudCreds cloudCredsSecretData
 	platform := installConfig.Config.Platform.Name()
 	switch platform {
@@ -179,10 +186,15 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 	cloudCredsSecret := &openshift.CloudCredsSecret{}
 	kubeadminPasswordSecret := &openshift.KubeadminPasswordSecret{}
 	roleCloudCredsSecretReader := &openshift.RoleCloudCredsSecretReader{}
+	baremetalConfig := &openshift.BaremetalConfig{}
+	rhcosImage := new(rhcos.Image)
+
 	dependencies.Get(
 		cloudCredsSecret,
 		kubeadminPasswordSecret,
-		roleCloudCredsSecretReader)
+		roleCloudCredsSecretReader,
+		baremetalConfig,
+		rhcosImage)
 
 	assetData := map[string][]byte{
 		"99_kubeadmin-password-secret.yaml": applyTemplateData(kubeadminPasswordSecret.Files()[0].Data, templateData),
@@ -192,6 +204,12 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 	case awstypes.Name, openstacktypes.Name, vspheretypes.Name, azuretypes.Name, gcptypes.Name, ovirttypes.Name:
 		assetData["99_cloud-creds-secret.yaml"] = applyTemplateData(cloudCredsSecret.Files()[0].Data, templateData)
 		assetData["99_role-cloud-creds-secret-reader.yaml"] = applyTemplateData(roleCloudCredsSecretReader.Files()[0].Data, templateData)
+	case baremetaltypes.Name:
+		bmTemplateData := baremetalTemplateData{
+			Baremetal:                 installConfig.Config.Platform.BareMetal,
+			ProvisioningOSDownloadURL: string(*rhcosImage),
+		}
+		assetData["99_baremetal-provisioning-config.yaml"] = applyTemplateData(baremetalConfig.Files()[0].Data, bmTemplateData)
 	}
 
 	if platform == azuretypes.Name && installConfig.Config.Publish == types.InternalPublishingStrategy {
@@ -210,6 +228,8 @@ func (o *Openshift) Generate(dependencies asset.Parents) error {
 			Data:     data,
 		})
 	}
+
+	o.FileList = append(o.FileList, openshiftInstall.Files()...)
 
 	asset.SortFiles(o.FileList)
 

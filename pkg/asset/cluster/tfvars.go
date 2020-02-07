@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os"
 
@@ -24,8 +25,10 @@ import (
 	"github.com/openshift/installer/pkg/asset/installconfig"
 	azureconfig "github.com/openshift/installer/pkg/asset/installconfig/azure"
 	gcpconfig "github.com/openshift/installer/pkg/asset/installconfig/gcp"
+	openstackconfig "github.com/openshift/installer/pkg/asset/installconfig/openstack"
 	ovirtconfig "github.com/openshift/installer/pkg/asset/installconfig/ovirt"
 	"github.com/openshift/installer/pkg/asset/machines"
+	"github.com/openshift/installer/pkg/asset/openshiftinstall"
 	"github.com/openshift/installer/pkg/asset/rhcos"
 	"github.com/openshift/installer/pkg/tfvars"
 	awstfvars "github.com/openshift/installer/pkg/tfvars/aws"
@@ -47,7 +50,6 @@ import (
 	openstackdefaults "github.com/openshift/installer/pkg/types/openstack/defaults"
 	"github.com/openshift/installer/pkg/types/ovirt"
 	"github.com/openshift/installer/pkg/types/vsphere"
-	"github.com/openshift/installer/pkg/version"
 )
 
 const (
@@ -336,6 +338,20 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 			Data:     data,
 		})
 	case openstack.Name:
+		cloud, err := openstackconfig.GetSession(installConfig.Config.Platform.OpenStack.Cloud)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cloud config for openstack")
+		}
+		var caCert string
+		// Get the ca-cert-bundle key if there is a value for cacert in clouds.yaml
+		if caPath := cloud.CloudConfig.CACertFile; caPath != "" {
+			caFile, err := ioutil.ReadFile(caPath)
+			if err != nil {
+				return errors.Wrap(err, "failed to read clouds.yaml ca-cert from disk")
+			}
+			caCert = string(caFile)
+		}
+
 		masters, err := mastersAsset.Machines()
 		if err != nil {
 			return err
@@ -365,7 +381,7 @@ func (t *TerraformVariables) Generate(parents asset.Parents) error {
 			installConfig.Config.Platform.OpenStack.OctaviaSupport,
 			string(*rhcosImage),
 			clusterID.InfraID,
-			installConfig.Config.AdditionalTrustBundle,
+			caCert,
 			bootstrapIgn,
 		)
 		if err != nil {
@@ -480,21 +496,12 @@ func injectInstallInfo(bootstrap []byte) (string, error) {
 		return "", errors.Wrap(err, "failed to unmarshal bootstrap Ignition config")
 	}
 
-	invoker := "user"
-	if env := os.Getenv("OPENSHIFT_INSTALL_INVOKER"); env != "" {
-		invoker = env
+	cm, err := openshiftinstall.CreateInstallConfigMap("openshift-install")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to generate openshift-install config")
 	}
 
-	config.Storage.Files = append(config.Storage.Files, ignition.FileFromString("/opt/openshift/manifests/openshift-install.yml", "root", 0644, fmt.Sprintf(`---
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: openshift-install
-  namespace: openshift-config
-data:
-  version: "%s"
-  invoker: "%s"
-`, version.Raw, invoker)))
+	config.Storage.Files = append(config.Storage.Files, ignition.FileFromString("/opt/openshift/manifests/openshift-install.yaml", "root", 0644, cm))
 
 	ign, err := json.Marshal(config)
 	if err != nil {

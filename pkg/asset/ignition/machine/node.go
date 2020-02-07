@@ -2,6 +2,7 @@ package machine
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 
 	ignition "github.com/coreos/ignition/config/v2_2/types"
@@ -19,26 +20,26 @@ import (
 // served by the machine config server.
 func pointerIgnitionConfig(installConfig *types.InstallConfig, rootCA []byte, role string) *ignition.Config {
 	var ignitionHost string
+	// Default platform independent ignitionHost
+	ignitionHost = fmt.Sprintf("api-int.%s:22623", installConfig.ClusterDomain())
+	// Update ignitionHost as necessary for platform
 	switch installConfig.Platform.Name() {
 	case baremetaltypes.Name:
 		// Baremetal needs to point directly at the VIP because we don't have a
 		// way to configure DNS before Ignition runs.
-		ignitionHost = fmt.Sprintf("%s:22623", installConfig.BareMetal.APIVIP)
+		ignitionHost = net.JoinHostPort(installConfig.BareMetal.APIVIP, "22623")
 	case openstacktypes.Name:
 		apiVIP, err := openstackdefaults.APIVIP(installConfig.Networking)
 		if err == nil {
-			ignitionHost = fmt.Sprintf("%s:22623", apiVIP.String())
-		} else {
-			ignitionHost = fmt.Sprintf("api-int.%s:22623", installConfig.ClusterDomain())
+			ignitionHost = net.JoinHostPort(apiVIP.String(), "22623")
 		}
 	case ovirttypes.Name:
-		ignitionHost = fmt.Sprintf("%s:22623", installConfig.Ovirt.APIVIP)
+		ignitionHost = net.JoinHostPort(installConfig.Ovirt.APIVIP, "22623")
 	case vspheretypes.Name:
-		ignitionHost = fmt.Sprintf("%s:22623", installConfig.VSphere.APIVIP)
-	default:
-		ignitionHost = fmt.Sprintf("api-int.%s:22623", installConfig.ClusterDomain())
+		if installConfig.VSphere.APIVIP != "" {
+			ignitionHost = net.JoinHostPort(installConfig.VSphere.APIVIP, "22623")
+		}
 	}
-
 	return &ignition.Config{
 		Ignition: ignition.Ignition{
 			Version: ignition.MaxVersion.String(),

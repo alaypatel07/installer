@@ -266,6 +266,11 @@ then
 
 	rm --recursive --force mco-bootstrap
 
+	ADDITIONAL_FLAGS=""
+	if [ -f "/opt/openshift/tls/cloud-ca-cert.pem" ]; then
+		ADDITIONAL_FLAGS="--cloud-provider-ca-file=/assets/tls/cloud-ca-cert.pem"
+	fi
+
 	bootkube_podman_run \
 		--user 0 \
 		--volume "$PWD:/assets:z" \
@@ -289,7 +294,8 @@ then
 			--haproxy-image="${HAPROXY_IMAGE}" \
 			--baremetal-runtimecfg-image="${BAREMETAL_RUNTIMECFG_IMAGE}" \
 			--cloud-config-file=/assets/manifests/cloud-provider-config.yaml \
-			--cluster-etcd-operator-image="${CLUSTER_ETCD_OPERATOR_IMAGE}"
+			--cluster-etcd-operator-image="${CLUSTER_ETCD_OPERATOR_IMAGE}" \
+			${ADDITIONAL_FLAGS}
 
 	# Bootstrap MachineConfigController uses /etc/mcc/bootstrap/manifests/ dir to
 	# 1. read the controller config rendered by MachineConfigOperator
@@ -371,11 +377,10 @@ done
 echo "etcd cluster up. Killing etcd certificate signer..."
 
 podman rm --force etcd-signer
-rm --force /etc/kubernetes/manifests/machineconfigoperator-bootstrap-pod.yaml
 
 echo "Starting cluster-bootstrap..."
 
-if [ ! -f cvo-bootstrap.done ]
+if [ ! -f cb-bootstrap.done ]
 then
     bootkube_podman_run \
         --rm \
@@ -383,8 +388,10 @@ then
         --volume /etc/kubernetes:/etc/kubernetes:z \
         "${CLUSTER_BOOTSTRAP_IMAGE}" \
         start --tear-down-early=false --asset-dir=/assets --required-pods="openshift-kube-apiserver/kube-apiserver,openshift-kube-scheduler/openshift-kube-scheduler,openshift-kube-controller-manager/kube-controller-manager,openshift-cluster-version/cluster-version-operator"
-    touch cvo-bootstrap.done
+    touch cb-bootstrap.done
 fi
+
+rm --force /etc/kubernetes/manifests/machineconfigoperator-bootstrap-pod.yaml
 
 if [ ! -z "$CLUSTER_ETCD_OPERATOR_IMAGE" ]
 then

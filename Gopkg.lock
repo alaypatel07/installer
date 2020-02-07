@@ -215,7 +215,7 @@
   version = "v18"
 
 [[projects]]
-  digest = "1:fb5b2aed0d774e210c1f2c0893e620cb3fa98957d3b925d0378f93b9613eb605"
+  digest = "1:b3ff820a2b867b5140ac8e6c84a1124affe7d671296b7648d06b61d0834617cf"
   name = "github.com/coreos/ignition"
   packages = [
     "config/shared/errors",
@@ -229,15 +229,16 @@
     "config/v2_1/types",
     "config/v2_2",
     "config/v2_2/types",
-    "config/v2_3_experimental/types",
+    "config/v2_4/types",
+    "config/v2_5_experimental/types",
     "config/validate",
     "config/validate/astjson",
     "config/validate/astnode",
     "config/validate/report",
   ]
   pruneopts = "NUT"
-  revision = "76107251acd117c6d3e5b4dae2b47f82f944984b"
-  version = "v0.26.0"
+  revision = "7afbeba044a8bf5762609fbb5f352291eeb7ad9a"
+  version = "v0.35.0"
 
 [[projects]]
   digest = "1:ffe9824d294da03b391f44e1ae8281281b4afc1bdaa9588c9097785e3af10cec"
@@ -398,7 +399,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:67551c599e04b31fe799b4bd4de0e101d3c022057213ef7af014bdce5f525b18"
+  digest = "1:0989b632c84399624334e9ed9b8157319cf01d211140c0a4f78f780564caeeb0"
   name = "github.com/gophercloud/gophercloud"
   packages = [
     ".",
@@ -412,6 +413,7 @@
     "openstack/identity/v2/tenants",
     "openstack/identity/v2/tokens",
     "openstack/identity/v3/tokens",
+    "openstack/imageservice/v2/imagedata",
     "openstack/imageservice/v2/images",
     "openstack/loadbalancer/v2/apiversions",
     "openstack/loadbalancer/v2/l7policies",
@@ -565,7 +567,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:b79e6a0ba1e0e21024ba285da0c16b72be2f154844fb16fb9ce0402e758003cf"
+  digest = "1:05c59ec10037e3b6410b5f967e4f684faa0478d54c456f13cb64f6e32f1afcb7"
   name = "github.com/metal3-io/baremetal-operator"
   packages = [
     "pkg/apis/metal3/v1alpha1",
@@ -573,7 +575,7 @@
     "pkg/hardware",
   ]
   pruneopts = "NUT"
-  revision = "81ee999993403b111183ca496ba2a987cc7e59e6"
+  revision = "71b826cc0f0a0686efc4fe84e2eab7e36aab27f7"
   source = "https://github.com/openshift/baremetal-operator"
 
 [[projects]]
@@ -673,7 +675,7 @@
 
 [[projects]]
   branch = "master"
-  digest = "1:cd242e9cb5a2a75c6e6527828a698746225b397c8600f0d3f51d1f149fbeb28d"
+  digest = "1:b5571e94625ed635a0f0753a3b8a8f6a285be136b28e627de60f0b1229841c4e"
   name = "github.com/openshift/cloud-credential-operator"
   packages = [
     "pkg/apis/cloudcredential/v1",
@@ -681,7 +683,7 @@
     "version",
   ]
   pruneopts = "NUT"
-  revision = "44ed18ef8496f9417af89f92539b8385b1cc9d51"
+  revision = "a443c1b9c73a79a25c8fd3c37bfdd08c009b7d6d"
 
 [[projects]]
   branch = "openshift-4.2-cluster-api-0.1.0"
@@ -862,6 +864,33 @@
   packages = ["."]
   pruneopts = "NUT"
   revision = "9a301d65acbb728fcc3ace14f45f511a4cfeea9c"
+
+[[projects]]
+  branch = "master"
+  digest = "1:6985ae3d34c74a894dbafce8895c02d7913b26f2e502653a769215cfd1fdc9e3"
+  name = "github.com/vmware/govmomi"
+  packages = [
+    ".",
+    "nfc",
+    "object",
+    "property",
+    "session",
+    "task",
+    "vapi/internal",
+    "vapi/rest",
+    "vapi/tags",
+    "vim25",
+    "vim25/debug",
+    "vim25/methods",
+    "vim25/mo",
+    "vim25/progress",
+    "vim25/soap",
+    "vim25/types",
+    "vim25/xml",
+  ]
+  pruneopts = "NUT"
+  revision = "deff37c279fe783a0ea565cd572565d37bbedafd"
+  source = "https://github.com/vmware/govmomi"
 
 [[projects]]
   digest = "1:58f2854b50ff8862eb6a347f20dedaac83e1166f4040472e17bc37736841a12f"
@@ -1528,6 +1557,7 @@
     "github.com/containers/image/pkg/sysregistriesv2",
     "github.com/coreos/ignition/config/util",
     "github.com/coreos/ignition/config/v2_2/types",
+    "github.com/coreos/ignition/config/v2_4/types",
     "github.com/ghodss/yaml",
     "github.com/golang/mock/gomock",
     "github.com/google/uuid",
@@ -1537,6 +1567,7 @@
     "github.com/gophercloud/gophercloud/openstack/compute/v2/flavors",
     "github.com/gophercloud/gophercloud/openstack/compute/v2/servers",
     "github.com/gophercloud/gophercloud/openstack/identity/v3/tokens",
+    "github.com/gophercloud/gophercloud/openstack/imageservice/v2/imagedata",
     "github.com/gophercloud/gophercloud/openstack/imageservice/v2/images",
     "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/apiversions",
     "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/loadbalancers",
@@ -1586,6 +1617,15 @@
     "github.com/spf13/cobra",
     "github.com/stretchr/testify/assert",
     "github.com/vincent-petithory/dataurl",
+    "github.com/vmware/govmomi",
+    "github.com/vmware/govmomi/object",
+    "github.com/vmware/govmomi/property",
+    "github.com/vmware/govmomi/vapi/rest",
+    "github.com/vmware/govmomi/vapi/tags",
+    "github.com/vmware/govmomi/vim25",
+    "github.com/vmware/govmomi/vim25/mo",
+    "github.com/vmware/govmomi/vim25/soap",
+    "github.com/vmware/govmomi/vim25/types",
     "golang.org/x/crypto/bcrypt",
     "golang.org/x/crypto/ssh",
     "golang.org/x/crypto/ssh/agent",
