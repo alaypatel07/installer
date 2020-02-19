@@ -17,11 +17,10 @@ example.
   * python3
   * [jq][jqjson]
   * [yq][yqyaml]
-* python dotmap library: install it with `pip install dotmap`
 
 ## Create an install config
 
-Create an install configuration as for [the usual approach](install.md#create-configuration):
+Create an install configuration as for [the usual approach](install.md#create-configuration).
 
 ```console
 $ openshift-install create install-config
@@ -38,6 +37,10 @@ INFO Saving user credentials to "/home/user_id/.azure/osServicePrincipal.json"
 ? Pull Secret [? for help]
 ```
 
+Note that we're going to have a new Virtual Network and subnetworks created specifically for this deployment, but it is also possible to use a networking
+infrastructure already existing in your organization. Please refer to the [customization instructions](customization.md) for more details about setting
+up an install config for that scenario.
+
 ### Extract data from install config
 
 Some data from the install configuration file will be used on later steps. Export them as environment variables with:
@@ -48,7 +51,6 @@ export AZURE_REGION=`yq -r .platform.azure.region install-config.yaml`
 export SSH_KEY=`yq -r .sshKey install-config.yaml | xargs`
 export BASE_DOMAIN=`yq -r .baseDomain install-config.yaml`
 export BASE_DOMAIN_RESOURCE_GROUP=`yq -r .platform.azure.baseDomainResourceGroupName install-config.yaml`
-export RESOURCE_GROUP=$CLUSTER_NAME
 ```
 
 ### Empty the compute pool
@@ -75,32 +77,6 @@ INFO Consuming "Install Config" from target directory
 WARNING Making control-plane schedulable by setting MastersSchedulable to true for Scheduler cluster settings
 ```
 
-### Customize manifests
-
-The manifests need to reflect the resources to be created by the [Azure Resource Manager][azuretemplates] template, e.g. the
-resource group name. Also, we don't want [the ingress operator][ingress-operator] to create DNS records (we're going to
-do it manually) so we need to remove the `privateZone` and `publicZone` sections from the DNS configuration in manifests.
-
-A Python script named `setup-manifests.py` is provided to help with these and a few other changes required in manifests. This script
-works "as is" for a regular UPI deployment, but can be edited to reflect your own needs.
-
-For example, if you'd like to use a Virtual Network and subnets already existing in your organization (instead of a having new one
-created specifically for this deployment), you could either edit the `manifests/cluster-infrastructure-02-config.yml` file manually,
-or edit the script to provide their names and the resource group where they exist.
-
-```python3
-yamlx['status']['platformStatus']['azure']['networkResourceGroupName'] = "RESOURCE-GROUP-OF-MY-VNET"
-yamlx['status']['platformStatus']['azure']['virtualNetwork'] = "MY-VNET-NAME"
-yamlx['status']['platformStatus']['azure']['controlPlaneSubnet'] = resource_group + "MY-CONTROL-PLANE-SUBNET-NAME"
-yamlx['status']['platformStatus']['azure']['computeSubnet'] = resource_group + "MY-COMPUTE-NODES-SUBNET-NAME"
-```
-
-Finally, run the script to have the changes applies to your manifests:
-
-```sh
-python3 setup-manifests.py $RESOURCE_GROUP
-```
-
 ### Remove control plane machines and machinesets
 
 Remove the control plane machines and compute machinesets from the manifests.
@@ -109,6 +85,60 @@ We'll be providing those ourselves and don't want to involve the [machine-API op
 ```sh
 rm -f openshift/99_openshift-cluster-api_master-machines-*.yaml
 rm -f openshift/99_openshift-cluster-api_worker-machineset-*.yaml
+```
+
+### Make control-plane nodes unschedulable
+
+Currently [emptying the compute pools](#empty-the-compute-pool) makes control-plane nodes schedulable.
+But due to a [Kubernetes limitation][kubernetes-service-load-balancers-exclude-masters], router pods running on control-plane nodes will not be reachable by the ingress load balancer.
+Update the scheduler configuration to keep router pods and other workloads off the control-plane nodes:
+
+```sh
+python3 -c '
+import yaml;
+path = "manifests/cluster-scheduler-02-config.yml";
+data = yaml.full_load(open(path));
+data["spec"]["mastersSchedulable"] = False;
+open(path, "w").write(yaml.dump(data, default_flow_style=False))'
+```
+
+### Remove DNS Zones
+
+We don't want [the ingress operator][ingress-operator] to create DNS records (we're going to do it manually) so we need to remove
+the `privateZone` and `publicZone` sections from the DNS configuration in manifests.
+
+```sh
+python3 -c '
+import yaml;
+path = "manifests/cluster-dns-02-config.yml";
+data = yaml.full_load(open(path));
+del data["spec"]["publicZone"];
+del data["spec"]["privateZone"];
+open(path, "w").write(yaml.dump(data, default_flow_style=False))'
+```
+
+### Resource Group Name and Infra ID
+
+The OpenShift cluster has been assigned an identifier in the form of `<cluster_name>-<random_string>`. This identifier, called "Infra ID", will be used as
+the base name of most resources that will be created in this example. Export the Infra ID as an environment variable that will be used later in this example:
+
+```sh
+export INFRA_ID=`yq -r '.status.infrastructureName' manifests/cluster-infrastructure-02-config.yml`
+```
+
+Also, all resources created in this Azure deployment will exist as part of a [resource group][azure-resource-group]. The resource group name is also
+based on the Infra ID, in the form of `<cluster_name>-<random_string>-rg`. Export the resource group name to an environment variable that will be user later:
+
+```sh
+export RESOURCE_GROUP=`yq -r '.status.platformStatus.azure.resourceGroupName' manifests/cluster-infrastructure-02-config.yml`
+```
+
+**Optional:** it's possible to choose any other name for the Infra ID and/or the resource group, but in that case some adjustments in manifests are needed.
+A Python script is provided to help with these adjustments. Export the `INFRA_ID` and the `RESOURCE_GROUP` environment variables with the desired names, copy the
+[`setup-manifests.py`](../../../upi/azure/setup-manifests.py) script locally and invoke it with:
+
+```sh
+python3 setup-manifests.py $RESOURCE_GROUP $INFRA_ID
 ```
 
 ## Create ignition configs
@@ -128,51 +158,26 @@ After running the command, several files will be available in the directory.
 ```console
 $ tree
 .
-├── 01_vnet.json
-├── 02_storage.json
-├── 03_infra.json
-├── 04_bootstrap.json
-├── 05_masters.json
-├── 06_workers.json
 ├── auth
-│   ├── kubeadmin-password
 │   └── kubeconfig
 ├── bootstrap.ign
 ├── master.ign
 ├── metadata.json
-├── setup-bootstrap-ignition.py
-├── setup-manifests.py
 └── worker.ign
-```
-
-## Infra ID
-
-The OpenShift cluster has been assigned an identifier in the form of `<cluster name>-<random string>`. You do not need this for anything in this example, but it is a good idea to keep it around.
-At this point you can see the various metadata about your future cluster in `metadata.json`.
-
-The Infra ID is under the `infraID` key:
-
-```console
-$ export INFRA_ID=$(jq -r .infraID metadata.json)
-$ echo $INFRA_ID
-openshift-vw4j5
 ```
 
 ## Create The Resource Group and identity
 
-All resources created in this Azure deployment will exist as part of a [resource group][azure-resource-group]. Use the commands
-below to create it in the selected Azure region. In this example we're going to use the cluster name as the unique
-resource group name, but feel free to choose any other name and export it in the `RESOURCE_GROUP` environment variable,
-which will be used in the subsequent steps.
+Use the command below to create the resource group in the selected Azure region:
 
 ```sh
 az group create --name $RESOURCE_GROUP --location $AZURE_REGION
 ```
 
-Also, create an identity which will be used to grant the required access to cluster operators.
+Also, create an identity which will be used to grant the required access to cluster operators:
 
 ```sh
-az identity create -g $RESOURCE_GROUP -n ${RESOURCE_GROUP}-identity
+az identity create -g $RESOURCE_GROUP -n ${INFRA_ID}-identity
 ```
 
 ## Upload the files to a Storage Account
@@ -220,12 +225,6 @@ do
 done
 ```
 
-Save the blob URL of the copied image for later use:
-
-```sh
-export VHD_BLOB_URL=`az storage blob url --account-name ${CLUSTER_NAME}sa --account-key $ACCOUNT_KEY -c vhd -n "rhcos.vhd" -o tsv`
-```
-
 ### Upload the bootstrap ignition
 
 Create a blob storage container and upload the generated `bootstrap.ign` file:
@@ -233,12 +232,6 @@ Create a blob storage container and upload the generated `bootstrap.ign` file:
 ```sh
 az storage container create --name files --account-name ${CLUSTER_NAME}sa --public-access blob
 az storage blob upload --account-name ${CLUSTER_NAME}sa --account-key $ACCOUNT_KEY -c "files" -f "bootstrap.ign" -n "bootstrap.ign"
-```
-
-Save the blob URL of the copied file for later use:
-
-```sh
-export BOOTSTRAP_URL=`az storage blob url --account-name ${CLUSTER_NAME}sa --account-key $ACCOUNT_KEY -c "files" -n "bootstrap.ign" -o tsv`
 ```
 
 ## Create the DNS zones
@@ -268,7 +261,7 @@ az network private-dns zone create -g $RESOURCE_GROUP -n ${CLUSTER_NAME}.${BASE_
 Grant the *Contributor* role to the Azure identity so that the Ingress Operator can create a public IP and its load balancer. You can do that with:
 
 ```sh
-export PRINCIPAL_ID=`az identity show -g $RESOURCE_GROUP -n ${RESOURCE_GROUP}-identity --query principalId --out tsv`
+export PRINCIPAL_ID=`az identity show -g $RESOURCE_GROUP -n ${INFRA_ID}-identity --query principalId --out tsv`
 export RESOURCE_GROUP_ID=`az group show -g $RESOURCE_GROUP --query id --out tsv`
 az role assignment create --assignee "$PRINCIPAL_ID" --role 'Contributor' --scope "$RESOURCE_GROUP_ID"
 ```
@@ -285,62 +278,86 @@ In this example we're going to create a Virtual Network and subnets specifically
 if the cluster is going to live in a VNet already existing in your organization, or you can edit the `01_vnet.json` file to your
 own needs (e.g. change the subnets address prefixes in CIDR format).
 
+Copy the [`01_vnet.json`](../../../upi/azure/01_vnet.json) ARM template locally.
+
+Create the deployment using the `az` client:
+
 ```sh
 az group deployment create -g $RESOURCE_GROUP \
-  --template-file "01_vnet.json"
+  --template-file "01_vnet.json" \
+  --parameters baseName="$INFRA_ID"
 ```
 
 Link the VNet just created to the private DNS zone:
 
 ```sh
-az network private-dns link vnet create -g $RESOURCE_GROUP -z ${CLUSTER_NAME}.${BASE_DOMAIN} -n ${CLUSTER_NAME}-network-link -v "${RESOURCE_GROUP}-vnet" -e false
+az network private-dns link vnet create -g $RESOURCE_GROUP -z ${CLUSTER_NAME}.${BASE_DOMAIN} -n ${INFRA_ID}-network-link -v "${INFRA_ID}-vnet" -e false
 ```
 
 ## Deploy the image
 
+Copy the [`02_storage.json`](../../../upi/azure/02_storage.json) ARM template locally.
+
+Create the deployment using the `az` client:
+
 ```sh
+export VHD_BLOB_URL=`az storage blob url --account-name ${CLUSTER_NAME}sa --account-key $ACCOUNT_KEY -c vhd -n "rhcos.vhd" -o tsv`
+
 az group deployment create -g $RESOURCE_GROUP \
   --template-file "02_storage.json" \
-  --parameters vhdBlobURL="${VHD_BLOB_URL}"
+  --parameters vhdBlobURL="$VHD_BLOB_URL" \
+  --parameters baseName="$INFRA_ID"
 ```
 
 ## Deploy the load balancers
 
-Deploy the load balancers and public IP addresses:
+Copy the [`03_infra.json`](../../../upi/azure/03_infra.json) ARM template locally.
+
+Deploy the load balancers and public IP addresses using the `az` client:
 
 ```sh
 az group deployment create -g $RESOURCE_GROUP \
   --template-file "03_infra.json" \
-  --parameters privateDNSZoneName="${CLUSTER_NAME}.${BASE_DOMAIN}"
+  --parameters privateDNSZoneName="${CLUSTER_NAME}.${BASE_DOMAIN}" \
+  --parameters baseName="$INFRA_ID"
 ```
 
 Create an `api` DNS record in the *public* zone for the API public load balancer. Note that the `BASE_DOMAIN_RESOURCE_GROUP` must point to the resource group where the public DNS zone exists.
 
 ```sh
-export PUBLIC_IP=`az network public-ip list -g $RESOURCE_GROUP --query "[?name=='${CLUSTER_NAME}-master-pip'] | [0].ipAddress" -o tsv`
+export PUBLIC_IP=`az network public-ip list -g $RESOURCE_GROUP --query "[?name=='${INFRA_ID}-master-pip'] | [0].ipAddress" -o tsv`
 az network dns record-set a add-record -g $BASE_DOMAIN_RESOURCE_GROUP -z ${CLUSTER_NAME}.${BASE_DOMAIN} -n api -a $PUBLIC_IP --ttl 60
 ```
 
 Or, in case of adding this cluster to an already existing public zone, use instead:
 
 ```sh
-export PUBLIC_IP=`az network public-ip list -g $RESOURCE_GROUP --query "[?name=='${CLUSTER_NAME}-master-pip'] | [0].ipAddress" -o tsv`
+export PUBLIC_IP=`az network public-ip list -g $RESOURCE_GROUP --query "[?name=='${INFRA_ID}-master-pip'] | [0].ipAddress" -o tsv`
 az network dns record-set a add-record -g $BASE_DOMAIN_RESOURCE_GROUP -z ${BASE_DOMAIN} -n api.${CLUSTER_NAME} -a $PUBLIC_IP --ttl 60
 ```
 
 ## Launch the temporary cluster bootstrap
 
+Copy the [`04_bootstrap.json`](../../../upi/azure/04_bootstrap.json) ARM template locally.
+
+Create the deployment using the `az` client:
+
 ```sh
-export BOOTSTRAP_IGNITION=`python3 setup-bootstrap-ignition.py $BOOTSTRAP_URL`
+export BOOTSTRAP_URL=`az storage blob url --account-name ${CLUSTER_NAME}sa --account-key $ACCOUNT_KEY -c "files" -n "bootstrap.ign" -o tsv`
+export BOOTSTRAP_IGNITION=`jq -rcnM --arg v "2.2.0" --arg url $BOOTSTRAP_URL '{ignition:{version:$v,config:{replace:{source:$url}}}}' | base64 -w0`
 
 az group deployment create -g $RESOURCE_GROUP \
   --template-file "04_bootstrap.json" \
   --parameters bootstrapIgnition="$BOOTSTRAP_IGNITION" \
   --parameters sshKeyData="$SSH_KEY" \
-  --parameters privateDNSZoneName="${CLUSTER_NAME}.${BASE_DOMAIN}"
+  --parameters baseName="$INFRA_ID"
 ```
 
 ## Launch the permanent control plane
+
+Copy the [`05_masters.json`](../../../upi/azure/05_masters.json) ARM template locally.
+
+Create the deployment using the `az` client:
 
 ```sh
 export MASTER_IGNITION=`cat master.ign | base64`
@@ -349,7 +366,8 @@ az group deployment create -g $RESOURCE_GROUP \
   --template-file "05_masters.json" \
   --parameters masterIgnition="$MASTER_IGNITION" \
   --parameters sshKeyData="$SSH_KEY" \
-  --parameters privateDNSZoneName="${CLUSTER_NAME}.${BASE_DOMAIN}"
+  --parameters privateDNSZoneName="${CLUSTER_NAME}.${BASE_DOMAIN}" \
+  --parameters baseName="$INFRA_ID"
 ```
 
 ## Wait for the bootstrap complete
@@ -373,12 +391,14 @@ INFO It is now safe to remove the bootstrap resources
 Once the bootstrapping process is complete you can deallocate and delete bootstrap resources:
 
 ```sh
-az vm stop -g $RESOURCE_GROUP --name ${RESOURCE_GROUP}-bootstrap
-az vm deallocate -g $RESOURCE_GROUP --name ${RESOURCE_GROUP}-bootstrap
-az vm delete -g $RESOURCE_GROUP --name ${RESOURCE_GROUP}-bootstrap --yes
-az disk delete -g $RESOURCE_GROUP --name ${RESOURCE_GROUP}-bootstrap_OSDisk --no-wait --yes
-az network nic delete -g $RESOURCE_GROUP --name ${RESOURCE_GROUP}-bootstrap-nic --no-wait
+az network nsg rule delete -g $RESOURCE_GROUP --nsg-name ${INFRA_ID}-controlplane-nsg --name bootstrap_ssh_in
+az vm stop -g $RESOURCE_GROUP --name ${INFRA_ID}-bootstrap
+az vm deallocate -g $RESOURCE_GROUP --name ${INFRA_ID}-bootstrap
+az vm delete -g $RESOURCE_GROUP --name ${INFRA_ID}-bootstrap --yes
+az disk delete -g $RESOURCE_GROUP --name ${INFRA_ID}-bootstrap_OSDisk --no-wait --yes
+az network nic delete -g $RESOURCE_GROUP --name ${INFRA_ID}-bootstrap-nic --no-wait
 az storage blob delete --account-key $ACCOUNT_KEY --account-name ${CLUSTER_NAME}sa --container-name files --name bootstrap.ign
+az network public-ip delete -g $RESOURCE_GROUP --name ${INFRA_ID}-bootstrap-ssh-pip
 ```
 
 ## Access the OpenShift API
@@ -400,13 +420,18 @@ You can also take advantage of the built in cluster scaling mechanisms and the m
 
 In this example, we'll manually launch three instances via the provided ARM template. Additional instances can be launched by editing the `06_workers.json` file.
 
+Copy the [`06_workers.json`](../../../upi/azure/06_workers.json) ARM template locally.
+
+Create the deployment using the `az` client:
+
 ```sh
 export WORKER_IGNITION=`cat worker.ign | base64`
 
 az group deployment create -g $RESOURCE_GROUP \
   --template-file "06_workers.json" \
   --parameters workerIgnition="$WORKER_IGNITION" \
-  --parameters sshKeyData="$SSH_KEY"
+  --parameters sshKeyData="$SSH_KEY" \
+  --parameters baseName="$INFRA_ID"
 ```
 
 ### Approve the worker CSRs
