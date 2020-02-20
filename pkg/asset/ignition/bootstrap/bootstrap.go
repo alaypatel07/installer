@@ -7,6 +7,7 @@ import (
 	"github.com/openshift/installer/pkg/asset/ignition/bootstrap/baremetal"
 	"io"
 	"io/ioutil"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -46,6 +47,7 @@ type bootstrapTemplateData struct {
 	AdditionalTrustBundle string
 	FIPS                  bool
 	EtcdCluster           string
+	BootstrapIP           string
 	PullSecret            string
 	ReleaseImage          string
 	Proxy                 *configv1.ProxyStatus
@@ -217,6 +219,11 @@ func (a *Bootstrap) getTemplateData(installConfig *types.InstallConfig, releaseI
 		etcdEndpoints[i] = fmt.Sprintf("https://etcd-%d.%s:2379", i, installConfig.ClusterDomain())
 	}
 
+	bootstrapIP, err := getBootstrapIP(installConfig)
+	if err != nil {
+		return nil, err
+	}
+
 	registries := []sysregistriesv2.Registry{}
 	for _, group := range mergedMirrorSets(imageSources) {
 		if len(group.Mirrors) == 0 {
@@ -246,6 +253,7 @@ func (a *Bootstrap) getTemplateData(installConfig *types.InstallConfig, releaseI
 		PullSecret:            installConfig.PullSecret,
 		ReleaseImage:          releaseImage,
 		EtcdCluster:           strings.Join(etcdEndpoints, ","),
+		BootstrapIP:           bootstrapIP,
 		Proxy:                 &proxy.Status,
 		Registries:            registries,
 		BootImage:             string(*rhcosImage),
@@ -525,4 +533,23 @@ func (a *Bootstrap) Load(f asset.FileFetcher) (found bool, err error) {
 
 	a.File, a.Config = file, config
 	return true, nil
+}
+
+// getBootstrapIP checks the list of all local IP addresses and returns
+// the first IP address in the subnet of MachineNetwork
+func getBootstrapIP(installConfig *types.InstallConfig) (string, error) {
+	ipAddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+
+	for _, ip := range ipAddrs {
+		for _, machineNetwork := range installConfig.Networking.MachineNetwork {
+			if machineNetwork.CIDR.Contains(net.ParseIP(ip.String())) {
+				return ip.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no IP address in MachineNetwork subnet found")
 }
